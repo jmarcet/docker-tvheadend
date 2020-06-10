@@ -153,6 +153,7 @@ RUN \
  git clone https://github.com/tvheadend/tvheadend.git /tmp/tvheadend && \
  cd /tmp/tvheadend && \
  git checkout ${TVHEADEND_COMMIT} && \
+ patch -p1 -i /tmp/patches/movistartv.patch && \
  ./configure \
 	`#Encoding` \
 	--disable-ffmpeg_static \

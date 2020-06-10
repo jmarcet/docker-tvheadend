@@ -1,0 +1,250 @@
+From 4676c60a456d86e2bb56e77a3e34e40b85617f18 Mon Sep 17 00:00:00 2001
+From: _WiLloW_ <MovistarTV@users.noreply.github.com>
+Date: Sun, 9 Sep 2018 20:52:36 +0200
+Subject: [PATCH] Added poster images and full genre (category and
+ sub-category) to recordings and original-title XMLTV tag support
+
+---
+ src/api/api_epg.c          |  4 ++++
+ src/dvr/dvr.h              |  1 +
+ src/dvr/dvr_db.c           | 22 +++++++++++++++++++++-
+ src/epg.c                  | 23 ++++++++++++++++++++---
+ src/epg.h                  |  5 +++++
+ src/epggrab/module/xmltv.c | 17 +++++++++++++++++
+ src/htsp_server.c          |  3 +++
+ 7 files changed, 71 insertions(+), 4 deletions(-)
+
+diff --git a/src/api/api_epg.c b/src/api/api_epg.c
+index 3cb8388d4..16fc8ee4b 100644
+--- a/src/api/api_epg.c
++++ b/src/api/api_epg.c
+@@ -180,6 +180,10 @@ api_epg_entry ( epg_broadcast_t *eb, const char *lang, const access_t *perm, con
+     if (s)
+       htsmsg_add_str(m, "image", s);
+   }
++    
++  /* Original Title */
++  if (eb->original_title)
++    htsmsg_add_str(m, "originalTitle", eb->original_title);
+ 
+   /* Rating */
+   if (eb->star_rating)
+diff --git a/src/dvr/dvr.h b/src/dvr/dvr.h
+index 755b14cfb..a6d6b4825 100644
+--- a/src/dvr/dvr.h
++++ b/src/dvr/dvr.h
+@@ -240,6 +240,7 @@ typedef struct dvr_entry {
+   lang_str_t *de_summary;    /* Summary in UTF-8 (from EPG) */
+   lang_str_t *de_desc;       /* Description in UTF-8 (from EPG) */
+   uint32_t de_content_type;  /* Content type (from EPG) (only code) */
++  uint32_t de_genre;         /* Episode genre (from EPG) (only code) */
+   uint16_t de_copyright_year; /* Copyright year (from EPG) */
+   uint16_t de_dvb_eid;
+ 
+diff --git a/src/dvr/dvr_db.c b/src/dvr/dvr_db.c
+index 7205b170d..a1e38017f 100644
+--- a/src/dvr/dvr_db.c
++++ b/src/dvr/dvr_db.c
+@@ -1205,8 +1205,10 @@ dvr_entry_create_from_htsmsg(htsmsg_t *conf, epg_broadcast_t *e)
+     if (e->image)
+       htsmsg_add_str(conf, "image", e->image);
+     genre = LIST_FIRST(&e->genre);
+-    if (genre)
++    if (genre) {
+       htsmsg_add_u32(conf, "content_type", genre->code / 16);
++      htsmsg_add_u32(conf, "genre", genre->code);
++    }
+   }
+ 
+   de = dvr_entry_create(NULL, conf, 0);
+@@ -4047,6 +4049,15 @@ dvr_entry_class_content_type_list(void *o, const char *lang)
+   return m;
+ }
+ 
++static htsmsg_t *
++dvr_entry_class_genre_list(void *o, const char *lang)
++{
++  htsmsg_t *m = htsmsg_create_map();
++  htsmsg_add_str(m, "type",  "api");
++  htsmsg_add_str(m, "uri",   "epg/genre/list");
++  return m;
++}
++
+ CLASS_DOC(dvrentry)
+ PROP_DOC(dvr_status)
+ PROP_DOC(dvr_start_extra)
+@@ -4502,6 +4513,15 @@ const idclass_t dvr_entry_class = {
+       .off      = offsetof(dvr_entry_t, de_content_type),
+       .opts     = PO_RDONLY | PO_SORTKEY,
+     },
++    {
++      .type     = PT_U32,
++      .id       = "genre",
++      .name     = N_("Episode genre"),
++      .desc     = N_("Episode genre code."),
++      .list     = dvr_entry_class_genre_list,
++      .off      = offsetof(dvr_entry_t, de_genre),
++      .opts     = PO_RDONLY,
++    },
+     {
+       .type     = PT_U16,
+       .id       = "copyright_year",
+diff --git a/src/epg.c b/src/epg.c
+index 093cc1a63..1c28180e7 100644
+--- a/src/epg.c
++++ b/src/epg.c
+@@ -858,10 +858,11 @@ static void _epg_broadcast_destroy ( void *eo )
+   }
+   free(ebc->image);
+   free(ebc->epnum.text);
+-  if (ebc->credits)     htsmsg_destroy(ebc->credits);
++  free(ebc->original_title);
++  if (ebc->credits)        htsmsg_destroy(ebc->credits);
+   if (ebc->credits_cached) lang_str_destroy(ebc->credits_cached);
+-  if (ebc->category)    string_list_destroy(ebc->category);
+-  if (ebc->keyword)     string_list_destroy(ebc->keyword);
++  if (ebc->category)       string_list_destroy(ebc->category);
++  if (ebc->keyword)        string_list_destroy(ebc->keyword);
+   if (ebc->keyword_cached) lang_str_destroy(ebc->keyword_cached);
+   epg_set_broadcast_remove(&epg_serieslinks, ebc->serieslink, ebc);
+   epg_set_broadcast_remove(&epg_episodelinks, ebc->episodelink, ebc);
+@@ -1014,6 +1015,8 @@ int epg_broadcast_change_finish
+     save |= _epg_object_set_u16(broadcast, &broadcast->epnum.p_cnt, 0, NULL, 0);
+   if (!(changes & EPG_CHANGED_EPTEXT))
+     save |= _epg_object_set_str(broadcast, &broadcast->epnum.text, NULL, NULL, 0);
++  if (!(changes & EPG_CHANGED_ORIGINAL_TITLE))
++    save |= epg_broadcast_set_original_title(broadcast, NULL, NULL);
+   if (!(changes & EPG_CHANGED_FIRST_AIRED))
+     save |= epg_broadcast_set_first_aired(broadcast, 0, NULL);
+   if (!(changes & EPG_CHANGED_COPYRIGHT_YEAR))
+@@ -1058,6 +1061,7 @@ epg_broadcast_t *epg_broadcast_clone
+     *save |= epg_broadcast_set_summary(ebc, src->summary, &changes);
+     *save |= epg_broadcast_set_description(ebc, src->description, &changes);
+     *save |= epg_broadcast_set_epnum(ebc, &src->epnum, &changes);
++    *save |= epg_broadcast_set_original_title(ebc, src->original_title, &changes);
+     *save |= epg_broadcast_set_credits(ebc, src->credits, &changes);
+     *save |= epg_broadcast_set_category(ebc, src->category, &changes);
+     *save |= epg_broadcast_set_keyword(ebc, src->keyword, &changes);
+@@ -1425,6 +1429,14 @@ int epg_broadcast_set_genre
+   return save;
+ }
+ 
++int epg_broadcast_set_original_title
++  ( epg_broadcast_t *b, const char *original_title, epg_changes_t *changed )
++{
++  if (!b) return 0;
++  return _epg_object_set_str(b, &b->original_title, original_title,
++                             changed, EPG_CHANGED_ORIGINAL_TITLE);
++}
++
+ int epg_broadcast_set_copyright_year
+   ( epg_broadcast_t *b, uint16_t year, epg_changes_t *changed )
+ {
+@@ -1580,6 +1592,8 @@ htsmsg_t *epg_broadcast_serialize ( epg_broadcast_t *broadcast )
+     htsmsg_add_u32(a, NULL, eg->code);
+   }
+   if (a) htsmsg_add_msg(m, "genre", a);
++  if (broadcast->original_title)
++    htsmsg_add_str(m, "otitle", broadcast->original_title);
+   if (broadcast->copyright_year)
+     htsmsg_add_u32(m, "cyear", broadcast->copyright_year);
+   if (broadcast->first_aired)
+@@ -1699,6 +1713,9 @@ epg_broadcast_t *epg_broadcast_deserialize
+     *save |= epg_broadcast_set_epnum(ebc, &num, &changes);
+     if (num.text) free(num.text);
+   }
++  
++  if ((str = htsmsg_get_str(m, "otitle")))
++    *save |= epg_broadcast_set_original_title(ebc, str, &changes);
+ 
+   if (!htsmsg_get_u32(m, "cyear", &u32))
+     *save |= epg_broadcast_set_copyright_year(ebc, u32, &changes);
+diff --git a/src/epg.h b/src/epg.h
+index b81589c86..cf1ed2cab 100644
+--- a/src/epg.h
++++ b/src/epg.h
+@@ -149,6 +149,7 @@ typedef uint64_t epg_changes_t;
+ #define EPG_CHANGED_AGE_RATING     (1ULL<<31)
+ #define EPG_CHANGED_FIRST_AIRED    (1ULL<<32)
+ #define EPG_CHANGED_COPYRIGHT_YEAR (1ULL<<33)
++#define EPG_CHANGED_ORIGINAL_TITLE (1ULL<<34)
+ 
+ typedef struct epg_object_ops {
+   void (*getref)  ( void *o );        ///< Get a reference
+@@ -287,6 +288,7 @@ struct epg_broadcast
+   lang_str_t                *summary;          ///< Summary
+   lang_str_t                *description;      ///< Description
+ 
++  char                      *original_title;   ///< Original title
+   char                      *image;            ///< Episode image
+   epg_genre_list_t           genre;            ///< Episode genre(s)
+   epg_episode_num_t          epnum;            ///< Episode numbering; NOTE: use the accessor routine!
+@@ -400,6 +402,9 @@ int epg_broadcast_set_genre
+ int epg_broadcast_set_image
+   ( epg_broadcast_t *b, const char *i, epg_changes_t *changed )
+   __attribute__((warn_unused_result));
++int epg_broadcast_set_original_title
++  ( epg_broadcast_t *b, const char *original_title, epg_changes_t *changed )
++  __attribute__((warn_unused_result));
+ int epg_broadcast_set_is_bw
+   ( epg_broadcast_t *b, uint8_t bw, epg_changes_t *changed )
+   __attribute__((warn_unused_result));
+diff --git a/src/epggrab/module/xmltv.c b/src/epggrab/module/xmltv.c
+index 34ab05bdb..977914a78 100644
+--- a/src/epggrab/module/xmltv.c
++++ b/src/epggrab/module/xmltv.c
+@@ -483,6 +483,21 @@ static int _xmltv_parse_age_rating
+   return 0;
+ }
+ 
++/*
++ * Parse original title
++ * <original-title>Title</original-title>
++ */
++static int _xmltv_parse_original_title
++  ( epg_broadcast_t *ebc, htsmsg_t *tags, epg_changes_t *changes )
++{
++  const char *original_title;
++
++  if (!ebc || !tags) return 0;
++  if (!(original_title = htsmsg_xml_get_cdata_str(tags, "original-title"))) return 0;
++
++  return epg_broadcast_set_original_title(ebc, original_title, changes);
++}
++
+ /*
+  * Parse category list
+  */
+@@ -817,6 +832,8 @@ static int _xmltv_parse_programme_tags
+ 
+   save |= _xmltv_parse_age_rating(ebc, tags, &changes);
+ 
++  save |= _xmltv_parse_original_title(ebc, tags, &changes);
++
+   if (icon)
+     save |= epg_broadcast_set_image(ebc, icon, &changes);
+ 
+diff --git a/src/htsp_server.c b/src/htsp_server.c
+index a4b0d7645..cc8028c87 100644
+--- a/src/htsp_server.c
++++ b/src/htsp_server.c
+@@ -997,6 +997,7 @@ htsp_build_dvrentry(htsp_connection_t *htsp, dvr_entry_t *de, const char *method
+       u32 = DVR_PRIO_NORMAL;
+     htsmsg_add_u32(out, "priority",    u32);
+     htsmsg_add_u32(out, "contentType", de->de_content_type);
++    htsmsg_add_u32(out, "genre",       de->de_genre);
+ 
+     if (de->de_sched_state == DVR_RECORDING || de->de_sched_state == DVR_COMPLETED) {
+       htsmsg_add_u32(out, "playcount",    de->de_playcount);
+@@ -1315,6 +1316,8 @@ htsp_build_event
+   htsp_serialize_epnum(out, &epnum, NULL);
+   if (!strempty(e->image))
+     htsmsg_add_str(out, "image", htsp_image(htsp, e->image, buf, sizeof(buf), 34));
++  if (e->original_title)
++    htsmsg_add_str(out, "originalTitle", e->original_title);
+ 
+   if (e->channel) {
+     LIST_FOREACH(de, &e->channel->ch_dvrs, de_channel_link) {
+-- 
+2.25.1
+
