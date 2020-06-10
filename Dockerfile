@@ -6,7 +6,7 @@ ARG ARGTABLE_VER="2.13"
 ARG XMLTV_VER="v0.6.1"
 
 # environment settings
-ARG TZ="Europe/Oslo"
+ARG TZ="Europe/Madrid"
 ARG TVHEADEND_COMMIT
 ENV HOME="/config"
 
