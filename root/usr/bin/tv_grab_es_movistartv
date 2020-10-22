@@ -1026,8 +1026,8 @@ class XMLTV:
                         tag_actor.text = actor.strip()
             ElTr.SubElement(tag_programme, 'icon', {
                     'src': '%s%s' % (config['tvCoversPath'], ext_info['cover'])})
-        tag_original_title = ElTr.SubElement(tag_programme, 'original-title')
-        tag_original_title.text = '%s|%s' % (channel_id, program['pid'])
+        tag_original_title = ElTr.SubElement(tag_programme, 'getCatchUpUrl')
+        tag_original_title.text = 'http://www-60.svc.imagenio.telefonica.net:2001/appserver/mvtv.do?action=getCatchUpUrl&extInfoID=%s&channelID=%s&service=2&mode=1' % ( program['pid'], channel_id )
         tag_rating = ElTr.SubElement(tag_programme, 'rating', {'system': 'pl'})
         tag_value = ElTr.SubElement(tag_rating, 'value')
         tag_value.text = age_rating[program['age_rating']]
